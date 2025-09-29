@@ -93,18 +93,20 @@ def get_theme_colors():
         }
 
 def create_modern_button(parent, text, command, button_type="primary", theme_colors=None):
-    """Create a modern styled button with hover effects"""
+    """Create a modern styled button with hover effects and guaranteed visibility"""
     if theme_colors is None:
         theme_colors = get_theme_colors()
     
     if button_type == "primary":
         bg_color = theme_colors["accent_color"]
-        fg_color = "#FFFFFF"
+        fg_color = "#FFFFFF"  # Always white for primary buttons
         hover_color = theme_colors["accent_hover"]
+        active_fg = "#FFFFFF"  # Keep white on click
     else:  # secondary
         bg_color = theme_colors["bg_secondary"]
         fg_color = theme_colors["fg_primary"]
         hover_color = theme_colors["bg_accent"]
+        active_fg = theme_colors["fg_primary"]
     
     button = tk.Button(
         parent,
@@ -117,7 +119,12 @@ def create_modern_button(parent, text, command, button_type="primary", theme_col
         borderwidth=0,
         padx=20,
         pady=8,
-        cursor="hand2" if IS_WINDOWS else "pointinghand"
+        cursor="hand2" if IS_WINDOWS else "pointinghand",
+        activebackground=hover_color,
+        activeforeground=active_fg,
+        highlightthickness=0,
+        highlightbackground=bg_color,
+        highlightcolor=bg_color
     )
     
     # Add hover effects
@@ -737,16 +744,41 @@ class ModernChoiceDialog:
         apply_modern_style(button_frame, "frame", self.theme_colors)
         button_frame.grid(row=3, column=0, sticky="ew")
         
-        # Create modern buttons
-        ok_button = create_modern_button(
-            button_frame, "OK", self.ok_clicked, "primary", self.theme_colors
+        # Create modern buttons with explicit styling
+        # OK button - primary style with guaranteed contrast
+        ok_button = tk.Button(
+            button_frame,
+            text="OK",
+            command=self.ok_clicked,
+            bg=self.theme_colors["accent_color"],
+            fg="#FFFFFF",  # Always white text for primary button
+            font=get_system_font(),
+            relief="flat",
+            borderwidth=0,
+            padx=20,
+            pady=8,
+            cursor="hand2" if IS_WINDOWS else "pointinghand",
+            activebackground=self.theme_colors["accent_hover"],
+            activeforeground="#FFFFFF",  # Keep white text on hover
+            highlightthickness=0
         )
         ok_button.pack(side=tk.RIGHT, padx=(8, 0))
         
+        # Cancel button - secondary style
         cancel_button = create_modern_button(
             button_frame, "Cancel", self.cancel_clicked, "secondary", self.theme_colors
         )
         cancel_button.pack(side=tk.RIGHT)
+        
+        # Add hover effects to OK button
+        def on_ok_enter(e):
+            ok_button.configure(bg=self.theme_colors["accent_hover"])
+        
+        def on_ok_leave(e):
+            ok_button.configure(bg=self.theme_colors["accent_color"])
+        
+        ok_button.bind("<Enter>", on_ok_enter)
+        ok_button.bind("<Leave>", on_ok_leave)
         
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self.cancel_clicked)
