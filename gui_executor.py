@@ -97,11 +97,25 @@ def create_modern_button(parent, text, command, button_type="primary", theme_col
     if theme_colors is None:
         theme_colors = get_theme_colors()
     
+    # On macOS, use native button styling without custom colors
+    if IS_MACOS:
+        button = tk.Button(
+            parent,
+            text=text,
+            command=command,
+            font=get_system_font(),
+            padx=20,
+            pady=8
+        )
+        # No custom colors on macOS - use native appearance
+        return button
+    
+    # Windows/Linux can use full custom styling
     if button_type == "primary":
         bg_color = theme_colors["accent_color"]
-        fg_color = "#FFFFFF"  # Always white for primary buttons
+        fg_color = "#FFFFFF"
         hover_color = theme_colors["accent_hover"]
-        active_fg = "#FFFFFF"  # Keep white on click
+        active_fg = "#FFFFFF"
     else:  # secondary
         bg_color = theme_colors["bg_secondary"]
         fg_color = theme_colors["fg_primary"]
@@ -127,7 +141,7 @@ def create_modern_button(parent, text, command, button_type="primary", theme_col
         highlightcolor=bg_color
     )
     
-    # Add hover effects
+    # Add hover effects for non-macOS
     def on_enter(e):
         button.configure(bg=hover_color)
     
@@ -744,41 +758,60 @@ class ModernChoiceDialog:
         apply_modern_style(button_frame, "frame", self.theme_colors)
         button_frame.grid(row=3, column=0, sticky="ew")
         
-        # Create modern buttons with explicit styling
-        # OK button - primary style with guaranteed contrast
+        # Create buttons with simple, reliable styling
+        # OK button
         ok_button = tk.Button(
             button_frame,
             text="OK",
             command=self.ok_clicked,
-            bg=self.theme_colors["accent_color"],
-            fg="#FFFFFF",  # Always white text for primary button
             font=get_system_font(),
-            relief="flat",
-            borderwidth=0,
             padx=20,
-            pady=8,
-            cursor="hand2" if IS_WINDOWS else "pointinghand",
-            activebackground=self.theme_colors["accent_hover"],
-            activeforeground="#FFFFFF",  # Keep white text on hover
-            highlightthickness=0
+            pady=8
         )
+        # Only apply custom colors on non-macOS systems
+        if not IS_MACOS:
+            ok_button.configure(
+                bg=self.theme_colors["accent_color"],
+                fg="#FFFFFF",
+                relief="flat",
+                borderwidth=0,
+                cursor="hand2" if IS_WINDOWS else "pointinghand",
+                activebackground=self.theme_colors["accent_hover"],
+                activeforeground="#FFFFFF",
+                highlightthickness=0
+            )
+            # Add hover effects for non-macOS
+            def on_ok_enter(e):
+                ok_button.configure(bg=self.theme_colors["accent_hover"])
+            
+            def on_ok_leave(e):
+                ok_button.configure(bg=self.theme_colors["accent_color"])
+            
+            ok_button.bind("<Enter>", on_ok_enter)
+            ok_button.bind("<Leave>", on_ok_leave)
+        
         ok_button.pack(side=tk.RIGHT, padx=(8, 0))
         
-        # Cancel button - secondary style
-        cancel_button = create_modern_button(
-            button_frame, "Cancel", self.cancel_clicked, "secondary", self.theme_colors
+        # Cancel button
+        cancel_button = tk.Button(
+            button_frame,
+            text="Cancel",
+            command=self.cancel_clicked,
+            font=get_system_font(),
+            padx=20,
+            pady=8
         )
+        # Only apply custom colors on non-macOS systems  
+        if not IS_MACOS:
+            cancel_button.configure(
+                bg=self.theme_colors["bg_secondary"],
+                fg=self.theme_colors["fg_primary"],
+                relief="flat",
+                borderwidth=0,
+                highlightthickness=0
+            )
+        
         cancel_button.pack(side=tk.RIGHT)
-        
-        # Add hover effects to OK button
-        def on_ok_enter(e):
-            ok_button.configure(bg=self.theme_colors["accent_hover"])
-        
-        def on_ok_leave(e):
-            ok_button.configure(bg=self.theme_colors["accent_color"])
-        
-        ok_button.bind("<Enter>", on_ok_enter)
-        ok_button.bind("<Leave>", on_ok_leave)
         
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self.cancel_clicked)
