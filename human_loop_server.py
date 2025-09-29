@@ -3,7 +3,7 @@
 Human-in-the-Loop MCP Server - macOS Compatible Version
 
 This server provides tools for getting human input and choices through GUI dialogs.
-Uses subprocess-based GUI execution for macOS compatibility.
+Uses external subprocess execution for macOS thread safety.
 """
 
 import asyncio
@@ -13,7 +13,7 @@ import subprocess
 import sys
 import os
 import pickle
-import tempfile
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal
 from pydantic import Field
 from typing import Annotated
@@ -31,570 +31,28 @@ IS_LINUX = CURRENT_PLATFORM == 'linux'
 # Initialize the MCP server
 mcp = FastMCP("Human-in-the-Loop Server")
 
-# GUI executor script that runs in a separate process
-GUI_EXECUTOR_SCRIPT = '''
-import sys
-import pickle
-import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
-import platform
-
-CURRENT_PLATFORM = platform.system().lower()
-IS_WINDOWS = CURRENT_PLATFORM == 'windows'
-IS_MACOS = CURRENT_PLATFORM == 'darwin'
-IS_LINUX = CURRENT_PLATFORM == 'linux'
-
-def get_system_font():
-    if IS_MACOS:
-        return ("SF Pro Display", 13)
-    elif IS_WINDOWS:
-        return ("Segoe UI", 10)
-    else:
-        return ("Ubuntu", 10)
-
-def get_title_font():
-    if IS_MACOS:
-        return ("SF Pro Display", 16, "bold")
-    elif IS_WINDOWS:
-        return ("Segoe UI", 14, "bold")
-    else:
-        return ("Ubuntu", 14, "bold")
-
-def get_text_font():
-    if IS_MACOS:
-        return ("Monaco", 12)
-    elif IS_WINDOWS:
-        return ("Consolas", 11)
-    else:
-        return ("Ubuntu Mono", 10)
-
-def get_theme_colors():
-    if IS_WINDOWS:
-        return {
-            "bg_primary": "#FFFFFF",
-            "bg_secondary": "#F8F9FA",
-            "bg_accent": "#F1F3F4",
-            "fg_primary": "#202124",
-            "fg_secondary": "#5F6368",
-            "accent_color": "#0078D4",
-            "accent_hover": "#106EBE",
-            "border_color": "#E8EAED",
-            "success_color": "#137333",
-            "error_color": "#D93025",
-            "selection_bg": "#E3F2FD",
-            "selection_fg": "#1565C0"
-        }
-    elif IS_MACOS:
-        return {
-            "bg_primary": "#FFFFFF",
-            "bg_secondary": "#F5F5F7",
-            "bg_accent": "#F2F2F7",
-            "fg_primary": "#1D1D1F",
-            "fg_secondary": "#86868B",
-            "accent_color": "#007AFF",
-            "accent_hover": "#0056CC",
-            "border_color": "#D2D2D7",
-            "success_color": "#30D158",
-            "error_color": "#FF3B30",
-            "selection_bg": "#E3F2FD",
-            "selection_fg": "#1565C0"
-        }
-    else:
-        return {
-            "bg_primary": "#FFFFFF",
-            "bg_secondary": "#F8F9FA",
-            "bg_accent": "#F1F3F4",
-            "fg_primary": "#202124",
-            "fg_secondary": "#5F6368",
-            "accent_color": "#1976D2",
-            "accent_hover": "#1565C0",
-            "border_color": "#E8EAED",
-            "success_color": "#388E3C",
-            "error_color": "#D32F2F",
-            "selection_bg": "#E3F2FD",
-            "selection_fg": "#1565C0"
-        }
-
-class ModernInputDialog:
-    def __init__(self, parent, title, prompt, default_value="", input_type="text"):
-        self.result = None
-        self.input_type = input_type
-        self.theme_colors = get_theme_colors()
-        
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title(title)
-        self.dialog.grab_set()
-        self.dialog.resizable(False, False)
-        
-        self.dialog.configure(bg=self.theme_colors["bg_primary"])
-        if IS_MACOS:
-            try:
-                self.dialog.attributes('-topmost', True)
-                self.dialog.lift()
-                self.dialog.focus_force()
-            except:
-                pass
-        elif IS_WINDOWS:
-            self.dialog.attributes('-topmost', True)
-        
-        self.dialog.geometry("420x280" if IS_WINDOWS else "400x260")
-        self.center_window()
-        
-        main_frame = tk.Frame(self.dialog, bg=self.theme_colors["bg_primary"])
-        main_frame.pack(fill="both", expand=True, padx=24, pady=20)
-        
-        tk.Label(main_frame, text=title, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_primary"], font=get_title_font(),
-                anchor="w").pack(fill="x", pady=(0, 8))
-        
-        tk.Label(main_frame, text=prompt, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_secondary"], font=get_system_font(),
-                wraplength=350, justify="left", anchor="w").pack(fill="x", pady=(0, 20))
-        
-        input_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
-        input_frame.pack(fill="x", pady=(0, 24))
-        
-        self.entry = tk.Entry(input_frame, font=get_system_font(),
-                             bg=self.theme_colors["bg_primary"],
-                             fg=self.theme_colors["fg_primary"],
-                             relief="solid", borderwidth=1)
-        self.entry.pack(fill="x", ipady=8, ipadx=12)
-        
-        if default_value:
-            self.entry.insert(0, default_value)
-            self.entry.select_range(0, tk.END)
-        
-        button_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
-        button_frame.pack(fill="x")
-        
-        tk.Button(button_frame, text="OK", command=self.ok_clicked,
-                 bg=self.theme_colors["accent_color"], fg="#FFFFFF",
-                 font=get_system_font(), relief="flat", borderwidth=0,
-                 padx=20, pady=8).pack(side=tk.RIGHT, padx=(8, 0))
-        
-        tk.Button(button_frame, text="Cancel", command=self.cancel_clicked,
-                 bg=self.theme_colors["bg_secondary"], fg=self.theme_colors["fg_primary"],
-                 font=get_system_font(), relief="flat", borderwidth=0,
-                 padx=20, pady=8).pack(side=tk.RIGHT)
-        
-        self.dialog.protocol("WM_DELETE_WINDOW", self.cancel_clicked)
-        self.dialog.bind('<Return>', lambda e: self.ok_clicked())
-        self.dialog.bind('<Escape>', lambda e: self.cancel_clicked())
-        
-        self.entry.focus_set()
-        self.dialog.wait_window()
-    
-    def center_window(self):
-        self.dialog.update_idletasks()
-        width = self.dialog.winfo_width()
-        height = self.dialog.winfo_height()
-        x = (self.dialog.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.dialog.winfo_screenheight() // 2) - (height // 2)
-        if IS_MACOS:
-            y = max(50, y - 50)
-        self.dialog.geometry(f"{width}x{height}+{x}+{y}")
-    
-    def ok_clicked(self):
-        value = self.entry.get()
-        if self.input_type == "integer":
-            try:
-                self.result = int(value) if value else None
-            except ValueError:
-                self.result = None
-        elif self.input_type == "float":
-            try:
-                self.result = float(value) if value else None
-            except ValueError:
-                self.result = None
-        else:
-            self.result = value if value else None
-        self.dialog.destroy()
-    
-    def cancel_clicked(self):
-        self.result = None
-        self.dialog.destroy()
-
-class ModernConfirmationDialog:
-    def __init__(self, parent, title, message):
-        self.result = False
-        self.theme_colors = get_theme_colors()
-        
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title(title)
-        self.dialog.grab_set()
-        self.dialog.resizable(False, False)
-        
-        self.dialog.configure(bg=self.theme_colors["bg_primary"])
-        if IS_MACOS:
-            try:
-                self.dialog.attributes('-topmost', True)
-            except:
-                pass
-        elif IS_WINDOWS:
-            self.dialog.attributes('-topmost', True)
-        
-        self.dialog.geometry("440x220" if IS_WINDOWS else "420x200")
-        self.center_window()
-        
-        main_frame = tk.Frame(self.dialog, bg=self.theme_colors["bg_primary"])
-        main_frame.pack(fill="both", expand=True, padx=24, pady=20)
-        
-        tk.Label(main_frame, text=title, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_primary"], font=get_title_font(),
-                anchor="w").pack(fill="x", pady=(0, 12))
-        
-        tk.Label(main_frame, text=message, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_secondary"], font=get_system_font(),
-                wraplength=370, justify="left", anchor="w").pack(fill="x", pady=(0, 24))
-        
-        button_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
-        button_frame.pack(fill="x")
-        
-        tk.Button(button_frame, text="Yes", command=self.yes_clicked,
-                 bg=self.theme_colors["accent_color"], fg="#FFFFFF",
-                 font=get_system_font(), relief="flat", borderwidth=0,
-                 padx=20, pady=8).pack(side=tk.RIGHT, padx=(8, 0))
-        
-        tk.Button(button_frame, text="No", command=self.no_clicked,
-                 bg=self.theme_colors["bg_secondary"], fg=self.theme_colors["fg_primary"],
-                 font=get_system_font(), relief="flat", borderwidth=0,
-                 padx=20, pady=8).pack(side=tk.RIGHT)
-        
-        self.dialog.protocol("WM_DELETE_WINDOW", self.no_clicked)
-        self.dialog.bind('<Return>', lambda e: self.yes_clicked())
-        self.dialog.bind('<Escape>', lambda e: self.no_clicked())
-        
-        self.dialog.wait_window()
-    
-    def center_window(self):
-        self.dialog.update_idletasks()
-        width = self.dialog.winfo_width()
-        height = self.dialog.winfo_height()
-        x = (self.dialog.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.dialog.winfo_screenheight() // 2) - (height // 2)
-        if IS_MACOS:
-            y = max(50, y - 50)
-        self.dialog.geometry(f"{width}x{height}+{x}+{y}")
-    
-    def yes_clicked(self):
-        self.result = True
-        self.dialog.destroy()
-    
-    def no_clicked(self):
-        self.result = False
-        self.dialog.destroy()
-
-class ModernInfoDialog:
-    def __init__(self, parent, title, message):
-        self.result = True
-        self.theme_colors = get_theme_colors()
-        
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title(title)
-        self.dialog.grab_set()
-        self.dialog.resizable(False, False)
-        
-        self.dialog.configure(bg=self.theme_colors["bg_primary"])
-        if IS_MACOS:
-            try:
-                self.dialog.attributes('-topmost', True)
-            except:
-                pass
-        elif IS_WINDOWS:
-            self.dialog.attributes('-topmost', True)
-        
-        self.dialog.geometry("420x200" if IS_WINDOWS else "400x180")
-        self.center_window()
-        
-        main_frame = tk.Frame(self.dialog, bg=self.theme_colors["bg_primary"])
-        main_frame.pack(fill="both", expand=True, padx=24, pady=20)
-        
-        tk.Label(main_frame, text=title, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_primary"], font=get_title_font(),
-                anchor="w").pack(fill="x", pady=(0, 12))
-        
-        tk.Label(main_frame, text=message, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_secondary"], font=get_system_font(),
-                wraplength=350, justify="left", anchor="w").pack(fill="x", pady=(0, 24))
-        
-        button_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
-        button_frame.pack(fill="x")
-        
-        tk.Button(button_frame, text="OK", command=self.ok_clicked,
-                 bg=self.theme_colors["accent_color"], fg="#FFFFFF",
-                 font=get_system_font(), relief="flat", borderwidth=0,
-                 padx=20, pady=8).pack(side=tk.RIGHT)
-        
-        self.dialog.protocol("WM_DELETE_WINDOW", self.ok_clicked)
-        self.dialog.bind('<Return>', lambda e: self.ok_clicked())
-        self.dialog.bind('<Escape>', lambda e: self.ok_clicked())
-        
-        self.dialog.wait_window()
-    
-    def center_window(self):
-        self.dialog.update_idletasks()
-        width = self.dialog.winfo_width()
-        height = self.dialog.winfo_height()
-        x = (self.dialog.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.dialog.winfo_screenheight() // 2) - (height // 2)
-        if IS_MACOS:
-            y = max(50, y - 50)
-        self.dialog.geometry(f"{width}x{height}+{x}+{y}")
-    
-    def ok_clicked(self):
-        self.result = True
-        self.dialog.destroy()
-
-class ChoiceDialog:
-    def __init__(self, parent, title, prompt, choices, allow_multiple=False):
-        self.result = None
-        self.theme_colors = get_theme_colors()
-        
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title(title)
-        self.dialog.grab_set()
-        self.dialog.resizable(True, True)
-        
-        self.dialog.configure(bg=self.theme_colors["bg_primary"])
-        if IS_MACOS:
-            try:
-                self.dialog.attributes('-topmost', True)
-            except:
-                pass
-        elif IS_WINDOWS:
-            self.dialog.attributes('-topmost', True)
-        
-        self.dialog.geometry("500x420" if IS_WINDOWS else "480x400")
-        self.center_window()
-        
-        main_frame = tk.Frame(self.dialog, bg=self.theme_colors["bg_primary"])
-        main_frame.pack(fill="both", expand=True, padx=24, pady=20)
-        
-        tk.Label(main_frame, text=title, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_primary"], font=get_title_font(),
-                anchor="w").pack(fill="x", pady=(0, 8))
-        
-        tk.Label(main_frame, text=prompt, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_secondary"], font=get_system_font(),
-                wraplength=450, justify="left", anchor="w").pack(fill="x", pady=(0, 20))
-        
-        list_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
-        list_frame.pack(fill="both", expand=True, pady=(0, 24))
-        
-        self.listbox = tk.Listbox(list_frame, selectmode=tk.MULTIPLE if allow_multiple else tk.SINGLE,
-                                 bg=self.theme_colors["bg_primary"], fg=self.theme_colors["fg_primary"],
-                                 selectbackground=self.theme_colors["selection_bg"],
-                                 font=get_system_font(), height=8)
-        for choice in choices:
-            self.listbox.insert(tk.END, choice)
-        self.listbox.pack(side=tk.LEFT, fill="both", expand=True)
-        
-        scrollbar = tk.Scrollbar(list_frame, command=self.listbox.yview)
-        scrollbar.pack(side=tk.RIGHT, fill="y")
-        self.listbox.configure(yscrollcommand=scrollbar.set)
-        
-        button_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
-        button_frame.pack(fill="x")
-        
-        tk.Button(button_frame, text="OK", command=self.ok_clicked,
-                 bg=self.theme_colors["accent_color"], fg="#FFFFFF",
-                 font=get_system_font(), relief="flat", borderwidth=0,
-                 padx=20, pady=8).pack(side=tk.RIGHT, padx=(8, 0))
-        
-        tk.Button(button_frame, text="Cancel", command=self.cancel_clicked,
-                 bg=self.theme_colors["bg_secondary"], fg=self.theme_colors["fg_primary"],
-                 font=get_system_font(), relief="flat", borderwidth=0,
-                 padx=20, pady=8).pack(side=tk.RIGHT)
-        
-        self.dialog.protocol("WM_DELETE_WINDOW", self.cancel_clicked)
-        self.dialog.bind('<Return>', lambda e: self.ok_clicked())
-        self.dialog.bind('<Escape>', lambda e: self.cancel_clicked())
-        
-        if choices:
-            self.listbox.selection_set(0)
-        
-        self.dialog.wait_window()
-    
-    def center_window(self):
-        self.dialog.update_idletasks()
-        width = self.dialog.winfo_width()
-        height = self.dialog.winfo_height()
-        x = (self.dialog.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.dialog.winfo_screenheight() // 2) - (height // 2)
-        if IS_MACOS:
-            y = max(50, y - 50)
-        self.dialog.geometry(f"{width}x{height}+{x}+{y}")
-    
-    def ok_clicked(self):
-        selection = self.listbox.curselection()
-        if selection:
-            selected_items = [self.listbox.get(i) for i in selection]
-            self.result = selected_items if len(selected_items) > 1 else selected_items[0]
-        self.dialog.destroy()
-    
-    def cancel_clicked(self):
-        self.result = None
-        self.dialog.destroy()
-
-class MultilineInputDialog:
-    def __init__(self, parent, title, prompt, default_value=""):
-        self.result = None
-        self.theme_colors = get_theme_colors()
-        
-        self.dialog = tk.Toplevel(parent)
-        self.dialog.title(title)
-        self.dialog.grab_set()
-        self.dialog.resizable(True, True)
-        
-        self.dialog.configure(bg=self.theme_colors["bg_primary"])
-        if IS_MACOS:
-            try:
-                self.dialog.attributes('-topmost', True)
-            except:
-                pass
-        elif IS_WINDOWS:
-            self.dialog.attributes('-topmost', True)
-        
-        self.dialog.geometry("600x500" if IS_WINDOWS else "580x480")
-        self.center_window()
-        
-        main_frame = tk.Frame(self.dialog, bg=self.theme_colors["bg_primary"])
-        main_frame.pack(fill="both", expand=True, padx=24, pady=20)
-        
-        tk.Label(main_frame, text=title, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_primary"], font=get_title_font(),
-                anchor="w").pack(fill="x", pady=(0, 8))
-        
-        tk.Label(main_frame, text=prompt, bg=self.theme_colors["bg_primary"],
-                fg=self.theme_colors["fg_secondary"], font=get_system_font(),
-                wraplength=520, justify="left", anchor="w").pack(fill="x", pady=(0, 20))
-        
-        text_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
-        text_frame.pack(fill="both", expand=True, pady=(0, 24))
-        
-        self.text_widget = tk.Text(text_frame, height=12, wrap="word",
-                                  bg=self.theme_colors["bg_primary"], fg=self.theme_colors["fg_primary"],
-                                  font=get_text_font(), padx=12, pady=8)
-        self.text_widget.pack(side=tk.LEFT, fill="both", expand=True)
-        
-        scrollbar = tk.Scrollbar(text_frame, command=self.text_widget.yview)
-        scrollbar.pack(side=tk.RIGHT, fill="y")
-        self.text_widget.configure(yscrollcommand=scrollbar.set)
-        
-        if default_value:
-            self.text_widget.insert("1.0", default_value)
-        
-        button_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
-        button_frame.pack(fill="x")
-        
-        tk.Button(button_frame, text="OK", command=self.ok_clicked,
-                 bg=self.theme_colors["accent_color"], fg="#FFFFFF",
-                 font=get_system_font(), relief="flat", borderwidth=0,
-                 padx=20, pady=8).pack(side=tk.RIGHT, padx=(8, 0))
-        
-        tk.Button(button_frame, text="Cancel", command=self.cancel_clicked,
-                 bg=self.theme_colors["bg_secondary"], fg=self.theme_colors["fg_primary"],
-                 font=get_system_font(), relief="flat", borderwidth=0,
-                 padx=20, pady=8).pack(side=tk.RIGHT)
-        
-        self.dialog.protocol("WM_DELETE_WINDOW", self.cancel_clicked)
-        self.dialog.bind('<Control-Return>', lambda e: self.ok_clicked())
-        self.dialog.bind('<Escape>', lambda e: self.cancel_clicked())
-        
-        self.text_widget.focus_set()
-        self.dialog.wait_window()
-    
-    def center_window(self):
-        self.dialog.update_idletasks()
-        width = self.dialog.winfo_width()
-        height = self.dialog.winfo_height()
-        x = (self.dialog.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.dialog.winfo_screenheight() // 2) - (height // 2)
-        if IS_MACOS:
-            y = max(50, y - 50)
-        self.dialog.geometry(f"{width}x{height}+{x}+{y}")
-    
-    def ok_clicked(self):
-        self.result = self.text_widget.get("1.0", tk.END).strip()
-        self.dialog.destroy()
-    
-    def cancel_clicked(self):
-        self.result = None
-        self.dialog.destroy()
-
-def execute_dialog(dialog_type, params):
-    """Execute a dialog based on type and parameters"""
-    root = tk.Tk()
-    root.withdraw()
-    
-    if IS_MACOS:
-        try:
-            import subprocess
-            subprocess.run([
-                'osascript', '-e', 
-                f'tell application "System Events" to set frontmost of first process whose unix id is {os.getpid()} to true'
-            ], check=False, capture_output=True, timeout=1)
-        except:
-            pass
-    
-    result = None
-    
-    try:
-        if dialog_type == "input":
-            dialog = ModernInputDialog(root, params["title"], params["prompt"], 
-                                     params.get("default_value", ""), params.get("input_type", "text"))
-            result = dialog.result
-        elif dialog_type == "choice":
-            dialog = ChoiceDialog(root, params["title"], params["prompt"], 
-                                params["choices"], params.get("allow_multiple", False))
-            result = dialog.result
-        elif dialog_type == "multiline":
-            dialog = MultilineInputDialog(root, params["title"], params["prompt"], 
-                                         params.get("default_value", ""))
-            result = dialog.result
-        elif dialog_type == "confirmation":
-            dialog = ModernConfirmationDialog(root, params["title"], params["message"])
-            result = dialog.result
-        elif dialog_type == "info":
-            dialog = ModernInfoDialog(root, params["title"], params["message"])
-            result = dialog.result
-    except Exception as e:
-        result = {"error": str(e)}
-    finally:
-        try:
-            root.quit()
-            root.destroy()
-        except:
-            pass
-    
-    return result
-
-if __name__ == "__main__":
-    # Read parameters from stdin
-    import os
-    params_data = sys.stdin.buffer.read()
-    params = pickle.loads(params_data)
-    
-    # Execute the dialog
-    result = execute_dialog(params["dialog_type"], params["params"])
-    
-    # Write result to stdout
-    sys.stdout.buffer.write(pickle.dumps(result))
-    sys.stdout.flush()
-'''
+# Path to the GUI executor file
+GUI_EXECUTOR_PATH = Path(__file__).parent / "gui_executor.py"
 
 def run_gui_subprocess(dialog_type: str, params: dict) -> Any:
     """Run a GUI dialog in a subprocess where it can use the main thread"""
     try:
+        # Check if gui_executor.py exists
+        if not GUI_EXECUTOR_PATH.exists():
+            raise FileNotFoundError(
+                f"GUI executor file not found at {GUI_EXECUTOR_PATH}. "
+                "Please ensure gui_executor.py is in the same directory as this server file."
+            )
+        
         # Prepare the parameters
         request = {
             "dialog_type": dialog_type,
             "params": params
         }
         
-        # Create a subprocess to run the GUI
+        # Create a subprocess to run the GUI executor
         process = subprocess.Popen(
-            [sys.executable, "-c", GUI_EXECUTOR_SCRIPT],
+            [sys.executable, str(GUI_EXECUTOR_PATH)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
@@ -605,7 +63,14 @@ def run_gui_subprocess(dialog_type: str, params: dict) -> Any:
         
         if process.returncode != 0:
             if stderr:
-                raise RuntimeError(f"GUI subprocess error: {stderr.decode()}")
+                error_msg = stderr.decode()
+                # Check if it's an NSException error
+                if "NSInternalInconsistencyException" in error_msg:
+                    raise RuntimeError(
+                        "macOS GUI thread error. Please ensure gui_executor.py is properly installed "
+                        "and Python has accessibility permissions in System Preferences."
+                    )
+                raise RuntimeError(f"GUI subprocess error: {error_msg}")
             return None
         
         # Parse the result
@@ -616,6 +81,9 @@ def run_gui_subprocess(dialog_type: str, params: dict) -> Any:
         
         return result
         
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        raise
     except Exception as e:
         print(f"Error in GUI subprocess: {e}")
         return None
@@ -935,17 +403,7 @@ You have access to Human-in-the-Loop tools that allow you to interact directly w
 2. **Content Creation:**
    - "What tone should I use: Professional, Casual, Friendly?" (choice)
    - "Please provide any specific requirements:" (multiline input)
-   - "Content generated successfully!" (info message)
-
-3. **Code Development:**
-   - "Enter the API endpoint URL:" (input)
-   - "Select framework: React, Vue, Angular, Vanilla JS" (choice)
-   - "Review the generated code and provide feedback:" (multiline input)
-
-4. **Data Processing:**
-   - "Found 3 data formats. Which should I use?" (choice)
-   - "Enter the date range (YYYY-MM-DD to YYYY-MM-DD):" (input)
-   - "Processing complete. 1,250 records updated." (info message)""",
+   - "Content generated successfully!" (info message)""",
         
         "decision_framework": """
 **DECISION FRAMEWORK FOR HUMAN-IN-THE-LOOP:**
@@ -955,63 +413,37 @@ ASK YOURSELF:
 2. Do I need specific information not provided? → USE INPUT DIALOG  
 3. Could this action cause problems if wrong? → USE CONFIRMATION DIALOG
 4. Is this a long process the user should know about? → USE INFO MESSAGE
-5. Do I need detailed explanation or content? → USE MULTILINE INPUT
-
-AVOID OVERUSE:
-- Don't ask for information already provided
-- Don't seek confirmation for obviously safe operations
-- Don't interrupt flow for trivial decisions
-- Don't ask multiple questions when one comprehensive dialog would suffice""",
-        
-        "integration_tips": """
-**INTEGRATION TIPS:**
-
-1. **Workflow Integration:**
-   Step 1: Analyze user request
-   Step 2: Identify decision points and missing info
-   Step 3: Use appropriate human-in-the-loop tools
-   Step 4: Process user responses
-   Step 5: Continue with enhanced information
-
-2. **Error Recovery:**
-   - If user cancels, gracefully explain and offer alternatives
-   - Handle timeouts by providing default behavior
-   - Always validate user input before proceeding
-
-3. **Progressive Enhancement:**
-   - Start with automated solutions
-   - Add human input only where it adds clear value
-   - Learn from user patterns to improve future automation"""
+5. Do I need detailed explanation or content? → USE MULTILINE INPUT"""
     }
 
 @mcp.tool()
 async def health_check() -> Dict[str, Any]:
     """Check if the Human-in-the-Loop server is running and GUI is available."""
     try:
-        # Test GUI availability by trying a simple operation
-        test_params = {
-            "title": "Health Check",
-            "message": "Testing GUI availability..."
-        }
+        # Check if GUI executor file exists
+        gui_executor_exists = GUI_EXECUTOR_PATH.exists()
         
-        # Try to run a test dialog (but with a very short timeout)
+        # Test GUI availability
         gui_test_success = False
-        try:
-            # We don't actually show the dialog, just test if subprocess works
-            process = subprocess.Popen(
-                [sys.executable, "-c", "import tkinter; print('OK')"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            stdout, stderr = process.communicate(timeout=2)
-            gui_test_success = process.returncode == 0 and b'OK' in stdout
-        except:
-            gui_test_success = False
+        if gui_executor_exists:
+            try:
+                # Test if we can import tkinter in a subprocess
+                process = subprocess.Popen(
+                    [sys.executable, "-c", "import tkinter; print('OK')"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                stdout, stderr = process.communicate(timeout=2)
+                gui_test_success = process.returncode == 0 and b'OK' in stdout
+            except:
+                gui_test_success = False
         
         return {
-            "status": "healthy" if gui_test_success else "degraded",
+            "status": "healthy" if (gui_executor_exists and gui_test_success) else "degraded",
             "gui_available": gui_test_success,
-            "server_name": "Human-in-the-Loop Server (Subprocess Mode)",
+            "gui_executor_found": gui_executor_exists,
+            "gui_executor_path": str(GUI_EXECUTOR_PATH),
+            "server_name": "Human-in-the-Loop Server (External Subprocess Mode)",
             "platform": CURRENT_PLATFORM,
             "platform_details": {
                 "system": platform.system(),
@@ -1033,8 +465,8 @@ async def health_check() -> Dict[str, Any]:
                 "get_human_loop_prompt",
                 "health_check"
             ],
-            "execution_mode": "subprocess",
-            "note": "GUI operations run in separate processes for thread safety"
+            "execution_mode": "external_subprocess",
+            "note": "GUI operations run in separate process files for maximum thread safety"
         }
     except Exception as e:
         return {
@@ -1046,11 +478,21 @@ async def health_check() -> Dict[str, Any]:
 
 # Main execution
 def main():
-    print("Starting Human-in-the-Loop MCP Server (macOS Subprocess Mode)...")
+    print("Starting Human-in-the-Loop MCP Server (macOS External Subprocess Mode)...")
     print("This server provides tools for LLMs to interact with humans through GUI dialogs.")
     print(f"Platform: {CURRENT_PLATFORM} ({platform.system()} {platform.release()})")
     print("")
-    print("Available tools:")
+    
+    # Check for gui_executor.py
+    if not GUI_EXECUTOR_PATH.exists():
+        print("⚠️  WARNING: gui_executor.py not found!")
+        print(f"   Please ensure gui_executor.py is in: {GUI_EXECUTOR_PATH.parent}")
+        print("   Download it from the project repository or create it from the provided code.")
+        print("")
+    else:
+        print("✓ GUI executor file found")
+    
+    print("\nAvailable tools:")
     print("- get_user_input - Get text/number input from user")
     print("- get_user_choice - Let user choose from options")
     print("- get_multiline_input - Get multi-line text from user")
@@ -1062,31 +504,38 @@ def main():
     
     # Platform-specific startup messages
     if IS_MACOS:
-        print("✓ macOS detected - Using subprocess mode for thread safety")
-        print("✓ Each GUI dialog runs in its own process with main thread access")
-        print("Note: You may need to allow Python in System Preferences > Security & Privacy > Accessibility")
+        print("✓ macOS detected - Using external subprocess mode for absolute thread safety")
+        print("✓ Each GUI dialog runs in a separate process with guaranteed main thread access")
+        print("\nIMPORTANT: You may need to:")
+        print("1. Allow Python in System Preferences > Security & Privacy > Accessibility")
+        print("2. Ensure both human_loop_server.py and gui_executor.py are in the same directory")
     elif IS_WINDOWS:
-        print("Windows detected - Using subprocess mode with Windows 11-style GUI")
+        print("Windows detected - Using external subprocess mode")
     elif IS_LINUX:
-        print("Linux detected - Using subprocess mode with Linux-compatible GUI")
+        print("Linux detected - Using external subprocess mode")
     
     # Test GUI availability
-    print("\nTesting GUI availability...")
-    try:
-        process = subprocess.Popen(
-            [sys.executable, "-c", "import tkinter; print('OK')"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        stdout, stderr = process.communicate(timeout=2)
-        if process.returncode == 0 and b'OK' in stdout:
-            print("✓ GUI system is available")
-        else:
-            print("⚠ GUI system may have issues")
-    except Exception as e:
-        print(f"⚠ Could not verify GUI availability: {e}")
+    if GUI_EXECUTOR_PATH.exists():
+        print("\nTesting GUI availability...")
+        try:
+            process = subprocess.Popen(
+                [sys.executable, "-c", "import tkinter; print('OK')"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = process.communicate(timeout=2)
+            if process.returncode == 0 and b'OK' in stdout:
+                print("✓ GUI system is available and working")
+            else:
+                print("⚠ GUI system may have issues")
+                if stderr:
+                    print(f"  Error: {stderr.decode()[:200]}")
+        except Exception as e:
+            print(f"⚠ Could not verify GUI availability: {e}")
     
     print("\nStarting MCP server...")
+    print("Ready to handle GUI requests through external subprocess execution.")
+    print("")
     
     # Run the server
     mcp.run()
