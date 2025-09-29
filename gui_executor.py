@@ -212,8 +212,98 @@ def apply_modern_style(widget, widget_type="default", theme_colors=None):
     except Exception:
         pass  # Ignore styling errors on different platforms
 
+def bring_window_to_front(window):
+    """Aggressively bring window to foreground and get user attention"""
+    try:
+        if IS_MACOS:
+            # macOS specific - multiple approaches for reliability
+            try:
+                # Set window to topmost
+                window.attributes('-topmost', True)
+                window.lift()
+                window.focus_force()
+                
+                # Use AppleScript to activate Python and bring to front
+                import subprocess
+                
+                # First, activate Python application
+                subprocess.run([
+                    'osascript', '-e',
+                    f'tell application "System Events" to set frontmost of first process whose unix id is {os.getpid()} to true'
+                ], check=False, capture_output=True, timeout=0.5)
+                
+                # Also try to activate by name (backup method)
+                subprocess.run([
+                    'osascript', '-e',
+                    'tell application "Python" to activate'
+                ], check=False, capture_output=True, timeout=0.5)
+                
+                # Play system sound to alert user
+                subprocess.run(['afplay', '/System/Library/Sounds/Glass.aiff'], 
+                             check=False, capture_output=True, timeout=0.5)
+            except:
+                pass
+                
+        elif IS_WINDOWS:
+            # Windows specific - use ctypes for more aggressive focusing
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                
+                # Get window handle
+                hwnd = user32.GetForegroundWindow()
+                
+                # Flash the window to get attention
+                user32.FlashWindow(hwnd, True)
+                
+                # Set as foreground window
+                user32.SetForegroundWindow(hwnd)
+                user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE = 3
+                user32.ShowWindow(hwnd, 1)  # SW_NORMAL = 1
+            except:
+                pass
+            
+            # Fallback Tkinter methods
+            window.attributes('-topmost', True)
+            window.lift()
+            window.focus_force()
+            window.bell()  # System beep
+            
+        else:  # Linux
+            # Linux window manager activation
+            window.attributes('-topmost', True)
+            window.lift()
+            window.focus_force()
+            window.bell()  # System beep
+            
+            try:
+                # Try wmctrl if available
+                import subprocess
+                subprocess.run(['wmctrl', '-a', window.title()], 
+                             check=False, capture_output=True, timeout=0.5)
+            except:
+                pass
+        
+        # Universal additional measures
+        window.update()
+        window.update_idletasks()
+        window.deiconify()  # Ensure window is not minimized
+        
+        # Briefly remove and re-add topmost to ensure it takes effect
+        window.after(100, lambda: window.attributes('-topmost', False))
+        window.after(200, lambda: window.attributes('-topmost', True))
+        
+    except Exception as e:
+        # Even if advanced methods fail, try basic approach
+        try:
+            window.attributes('-topmost', True)
+            window.lift()
+            window.focus_force()
+        except:
+            pass
+
 def configure_modern_window(window):
-    """Apply modern window styling"""
+    """Apply modern window styling and bring to foreground"""
     theme_colors = get_theme_colors()
     
     try:
@@ -225,24 +315,8 @@ def configure_modern_window(window):
             except:
                 pass
         
-        # Platform-specific window configurations
-        if IS_MACOS:
-            try:
-                window.attributes('-topmost', True)
-                window.lift()
-                window.focus_force()
-                # Activate the app on macOS
-                import subprocess
-                subprocess.run([
-                    'osascript', '-e', 
-                    f'tell application "System Events" to set frontmost of first process whose unix id is {os.getpid()} to true'
-                ], check=False, capture_output=True, timeout=1)
-            except:
-                pass
-        elif IS_WINDOWS:
-            window.attributes('-topmost', True)
-            window.lift()
-            window.focus_force()
+        # Aggressively bring window to foreground
+        bring_window_to_front(window)
         
     except Exception:
         pass
@@ -270,6 +344,11 @@ class ModernInputDialog:
             self.root.geometry("400x260")
         
         self.center_window()
+        
+        # Additional focus attempts after window is created
+        self.root.after(10, lambda: bring_window_to_front(self.root))
+        self.root.after(100, lambda: self.root.focus_force())
+        self.root.after(200, lambda: self.root.lift())
         
         # Create the main frame with padding
         main_frame = tk.Frame(self.root)
@@ -396,6 +475,11 @@ class ModernConfirmationDialog:
         
         self.center_window()
         
+        # Additional focus attempts after window is created
+        self.root.after(10, lambda: bring_window_to_front(self.root))
+        self.root.after(100, lambda: self.root.focus_force())
+        self.root.after(200, lambda: self.root.lift())
+        
         # Create the main frame
         main_frame = tk.Frame(self.root)
         apply_modern_style(main_frame, "frame", self.theme_colors)
@@ -494,6 +578,11 @@ class ModernInfoDialog:
         
         self.center_window()
         
+        # Additional focus attempts after window is created
+        self.root.after(10, lambda: bring_window_to_front(self.root))
+        self.root.after(100, lambda: self.root.focus_force())
+        self.root.after(200, lambda: self.root.lift())
+        
         # Create the main frame
         main_frame = tk.Frame(self.root)
         apply_modern_style(main_frame, "frame", self.theme_colors)
@@ -583,6 +672,11 @@ class ModernChoiceDialog:
             self.root.geometry("450x350")
         
         self.center_window()
+        
+        # Additional focus attempts after window is created
+        self.root.after(10, lambda: bring_window_to_front(self.root))
+        self.root.after(100, lambda: self.root.focus_force())
+        self.root.after(200, lambda: self.root.lift())
         
         # Create the main frame with modern styling
         main_frame = tk.Frame(self.root)
@@ -719,6 +813,11 @@ class ModernMultilineDialog:
             self.root.geometry("550x450")
         
         self.center_window()
+        
+        # Additional focus attempts after window is created
+        self.root.after(10, lambda: bring_window_to_front(self.root))
+        self.root.after(100, lambda: self.root.focus_force())
+        self.root.after(200, lambda: self.root.lift())
         
         # Create the main frame with modern styling
         main_frame = tk.Frame(self.root)
