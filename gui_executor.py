@@ -415,15 +415,49 @@ class ModernInputDialog:
         apply_modern_style(button_frame, "frame", self.theme_colors)
         button_frame.pack(fill="x")
         
-        # Create modern buttons
-        ok_button = create_modern_button(
-            button_frame, "OK", self.ok_clicked, "primary", self.theme_colors
+        # Create OK button with platform-specific styling
+        ok_button = tk.Button(
+            button_frame,
+            text="OK",
+            command=self.ok_clicked,
+            font=get_system_font(),
+            padx=20,
+            pady=8
         )
+        # Only apply custom colors on non-macOS systems
+        if not IS_MACOS:
+            ok_button.configure(
+                bg=self.theme_colors["accent_color"],
+                fg="#FFFFFF",
+                relief="flat",
+                borderwidth=0,
+                cursor="hand2" if IS_WINDOWS else "pointinghand",
+                activebackground=self.theme_colors["accent_hover"],
+                activeforeground="#FFFFFF",
+                highlightthickness=0
+            )
+        
         ok_button.pack(side=tk.RIGHT, padx=(8, 0))
         
-        cancel_button = create_modern_button(
-            button_frame, "Cancel", self.cancel_clicked, "secondary", self.theme_colors
+        # Create Cancel button with platform-specific styling
+        cancel_button = tk.Button(
+            button_frame,
+            text="Cancel",
+            command=self.cancel_clicked,
+            font=get_system_font(),
+            padx=20,
+            pady=8
         )
+        # Only apply custom colors on non-macOS systems
+        if not IS_MACOS:
+            cancel_button.configure(
+                bg=self.theme_colors["bg_secondary"],
+                fg=self.theme_colors["fg_primary"],
+                relief="flat",
+                borderwidth=0,
+                highlightthickness=0
+            )
+        
         cancel_button.pack(side=tk.RIGHT)
         
         # Handle window close and keyboard shortcuts
@@ -531,15 +565,49 @@ class ModernConfirmationDialog:
         apply_modern_style(button_frame, "frame", self.theme_colors)
         button_frame.pack(fill="x")
         
-        # Create modern buttons
-        yes_button = create_modern_button(
-            button_frame, "Yes", self.yes_clicked, "primary", self.theme_colors
+        # Create Yes button with platform-specific styling
+        yes_button = tk.Button(
+            button_frame,
+            text="Yes",
+            command=self.yes_clicked,
+            font=get_system_font(),
+            padx=20,
+            pady=8
         )
+        # Only apply custom colors on non-macOS systems
+        if not IS_MACOS:
+            yes_button.configure(
+                bg=self.theme_colors["accent_color"],
+                fg="#FFFFFF",
+                relief="flat",
+                borderwidth=0,
+                cursor="hand2" if IS_WINDOWS else "pointinghand",
+                activebackground=self.theme_colors["accent_hover"],
+                activeforeground="#FFFFFF",
+                highlightthickness=0
+            )
+        
         yes_button.pack(side=tk.RIGHT, padx=(8, 0))
         
-        no_button = create_modern_button(
-            button_frame, "No", self.no_clicked, "secondary", self.theme_colors
+        # Create No button with platform-specific styling  
+        no_button = tk.Button(
+            button_frame,
+            text="No",
+            command=self.no_clicked,
+            font=get_system_font(),
+            padx=20,
+            pady=8
         )
+        # Only apply custom colors on non-macOS systems
+        if not IS_MACOS:
+            no_button.configure(
+                bg=self.theme_colors["bg_secondary"],
+                fg=self.theme_colors["fg_primary"],
+                relief="flat",
+                borderwidth=0,
+                highlightthickness=0
+            )
+        
         no_button.pack(side=tk.RIGHT)
         
         # Handle window close and keyboard shortcuts
@@ -634,10 +702,28 @@ class ModernInfoDialog:
         apply_modern_style(button_frame, "frame", self.theme_colors)
         button_frame.pack(fill="x")
         
-        # Create modern OK button
-        ok_button = create_modern_button(
-            button_frame, "OK", self.ok_clicked, "primary", self.theme_colors
+        # Create OK button with platform-specific styling
+        ok_button = tk.Button(
+            button_frame,
+            text="OK",
+            command=self.ok_clicked,
+            font=get_system_font(),
+            padx=20,
+            pady=8
         )
+        # Only apply custom colors on non-macOS systems
+        if not IS_MACOS:
+            ok_button.configure(
+                bg=self.theme_colors["accent_color"],
+                fg="#FFFFFF",
+                relief="flat",
+                borderwidth=0,
+                cursor="hand2" if IS_WINDOWS else "pointinghand",
+                activebackground=self.theme_colors["accent_hover"],
+                activeforeground="#FFFFFF",
+                highlightthickness=0
+            )
+        
         ok_button.pack(side=tk.RIGHT)
         
         # Handle window close and keyboard shortcuts
@@ -940,15 +1026,49 @@ class ModernMultilineDialog:
         apply_modern_style(button_frame, "frame", self.theme_colors)
         button_frame.grid(row=3, column=0, sticky="ew")
         
-        # Create modern buttons
-        ok_button = create_modern_button(
-            button_frame, "OK", self.ok_clicked, "primary", self.theme_colors
+        # Create OK button with platform-specific styling
+        ok_button = tk.Button(
+            button_frame,
+            text="OK",
+            command=self.ok_clicked,
+            font=get_system_font(),
+            padx=20,
+            pady=8
         )
+        # Only apply custom colors on non-macOS systems
+        if not IS_MACOS:
+            ok_button.configure(
+                bg=self.theme_colors["accent_color"],
+                fg="#FFFFFF",
+                relief="flat",
+                borderwidth=0,
+                cursor="hand2" if IS_WINDOWS else "pointinghand",
+                activebackground=self.theme_colors["accent_hover"],
+                activeforeground="#FFFFFF",
+                highlightthickness=0
+            )
+        
         ok_button.pack(side=tk.RIGHT, padx=(8, 0))
         
-        cancel_button = create_modern_button(
-            button_frame, "Cancel", self.cancel_clicked, "secondary", self.theme_colors
+        # Create Cancel button with platform-specific styling
+        cancel_button = tk.Button(
+            button_frame,
+            text="Cancel",
+            command=self.cancel_clicked,
+            font=get_system_font(),
+            padx=20,
+            pady=8
         )
+        # Only apply custom colors on non-macOS systems
+        if not IS_MACOS:
+            cancel_button.configure(
+                bg=self.theme_colors["bg_secondary"],
+                fg=self.theme_colors["fg_primary"],
+                relief="flat",
+                borderwidth=0,
+                highlightthickness=0
+            )
+        
         cancel_button.pack(side=tk.RIGHT)
         
         # Handle window close
