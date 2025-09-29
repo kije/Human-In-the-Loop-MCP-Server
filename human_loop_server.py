@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 """
-Human-in-the-Loop MCP Server - Fixed for macOS Thread Safety
+Human-in-the-Loop MCP Server - macOS Compatible Version
 
 This server provides tools for getting human input and choices through GUI dialogs.
-Fixed to ensure all GUI operations happen on the main thread for macOS compatibility.
+Uses subprocess-based GUI execution for macOS compatibility.
 """
 
 import asyncio
 import json
 import platform
 import subprocess
-import threading
-import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
-from typing import List, Dict, Any, Optional, Literal
 import sys
 import os
+import pickle
+import tempfile
+from typing import List, Dict, Any, Optional, Literal
 from pydantic import Field
 from typing import Annotated
-import queue
-from concurrent.futures import Future
 
 # Set required environment variable for FastMCP 2.8.1+
 os.environ.setdefault('FASTMCP_LOG_LEVEL', 'INFO')
@@ -34,118 +31,20 @@ IS_LINUX = CURRENT_PLATFORM == 'linux'
 # Initialize the MCP server
 mcp = FastMCP("Human-in-the-Loop Server")
 
-# Global GUI management
-_gui_thread = None
-_gui_queue = queue.Queue()
-_gui_root = None
-_gui_initialized = threading.Event()
-_gui_lock = threading.Lock()
+# GUI executor script that runs in a separate process
+GUI_EXECUTOR_SCRIPT = '''
+import sys
+import pickle
+import tkinter as tk
+from tkinter import messagebox, simpledialog, ttk
+import platform
 
-class GUIRequest:
-    """Encapsulates a GUI request with its future for the result"""
-    def __init__(self, func, args, kwargs):
-        self.func = func
-        self.args = args
-        self.kwargs = kwargs
-        self.future = Future()
-
-def gui_thread_worker():
-    """Main GUI thread worker that processes all GUI requests"""
-    global _gui_root
-    
-    try:
-        # Create the main Tkinter root in this thread
-        _gui_root = tk.Tk()
-        _gui_root.withdraw()  # Hide the main window
-        
-        # Platform-specific configuration
-        if IS_MACOS:
-            try:
-                # Configure for macOS
-                _gui_root.call('wm', 'attributes', '.', '-topmost', '1')
-                # Try to activate Python app
-                subprocess.run([
-                    'osascript', '-e', 
-                    f'tell application "System Events" to set frontmost of first process whose unix id is {os.getpid()} to true'
-                ], check=False, capture_output=True, timeout=1)
-            except:
-                pass
-        elif IS_WINDOWS:
-            _gui_root.attributes('-topmost', True)
-        
-        # Signal that GUI is initialized
-        _gui_initialized.set()
-        
-        # Process GUI requests
-        while True:
-            try:
-                # Check for requests with a short timeout
-                _gui_root.update()  # Process Tkinter events
-                
-                try:
-                    request = _gui_queue.get(block=False)
-                except queue.Empty:
-                    _gui_root.after(50)  # Wait 50ms before next check
-                    continue
-                
-                if request is None:  # Shutdown signal
-                    break
-                
-                # Execute the GUI operation in the main GUI thread
-                try:
-                    result = request.func(*request.args, **request.kwargs)
-                    request.future.set_result(result)
-                except Exception as e:
-                    request.future.set_exception(e)
-                    
-            except Exception as e:
-                print(f"Error in GUI thread: {e}")
-                
-    except Exception as e:
-        print(f"Fatal error in GUI thread: {e}")
-        _gui_initialized.set()  # Set to prevent hanging
-    finally:
-        if _gui_root:
-            try:
-                _gui_root.quit()
-                _gui_root.destroy()
-            except:
-                pass
-
-def ensure_gui_thread_running():
-    """Ensure the GUI thread is running"""
-    global _gui_thread
-    
-    with _gui_lock:
-        if _gui_thread is None or not _gui_thread.is_alive():
-            _gui_thread = threading.Thread(target=gui_thread_worker, daemon=True)
-            _gui_thread.start()
-            
-            # Wait for GUI initialization
-            if not _gui_initialized.wait(timeout=5):
-                raise RuntimeError("GUI thread failed to initialize")
-    
-    return True
-
-def run_in_gui_thread(func, *args, **kwargs):
-    """Execute a function in the GUI thread and return the result"""
-    ensure_gui_thread_running()
-    
-    request = GUIRequest(func, args, kwargs)
-    _gui_queue.put(request)
-    
-    # Wait for the result with timeout
-    try:
-        return request.future.result(timeout=300)  # 5 minute timeout
-    except Exception as e:
-        print(f"GUI operation failed: {e}")
-        raise
-
-# Keep all the existing helper functions (get_system_font, get_title_font, etc.)
-# ... [Keep all the style and theme functions as they are] ...
+CURRENT_PLATFORM = platform.system().lower()
+IS_WINDOWS = CURRENT_PLATFORM == 'windows'
+IS_MACOS = CURRENT_PLATFORM == 'darwin'
+IS_LINUX = CURRENT_PLATFORM == 'linux'
 
 def get_system_font():
-    """Get appropriate system font for the current platform"""
     if IS_MACOS:
         return ("SF Pro Display", 13)
     elif IS_WINDOWS:
@@ -154,7 +53,6 @@ def get_system_font():
         return ("Ubuntu", 10)
 
 def get_title_font():
-    """Get title font for dialogs"""
     if IS_MACOS:
         return ("SF Pro Display", 16, "bold")
     elif IS_WINDOWS:
@@ -163,7 +61,6 @@ def get_title_font():
         return ("Ubuntu", 14, "bold")
 
 def get_text_font():
-    """Get text font for text widgets"""
     if IS_MACOS:
         return ("Monaco", 12)
     elif IS_WINDOWS:
@@ -172,7 +69,6 @@ def get_text_font():
         return ("Ubuntu Mono", 10)
 
 def get_theme_colors():
-    """Get modern theme colors based on platform"""
     if IS_WINDOWS:
         return {
             "bg_primary": "#FFFFFF",
@@ -203,7 +99,7 @@ def get_theme_colors():
             "selection_bg": "#E3F2FD",
             "selection_fg": "#1565C0"
         }
-    else:  # Linux
+    else:
         return {
             "bg_primary": "#FFFFFF",
             "bg_secondary": "#F8F9FA",
@@ -219,71 +115,10 @@ def get_theme_colors():
             "selection_fg": "#1565C0"
         }
 
-# Modified dialog creation functions to work with the GUI root
-def create_input_dialog(title: str, prompt: str, default_value: str = "", input_type: str = "text"):
-    """Create a modern input dialog window - runs in GUI thread"""
-    global _gui_root
-    
-    try:
-        dialog = ModernInputDialog(_gui_root, title, prompt, default_value, input_type)
-        return dialog.result
-    except Exception as e:
-        print(f"Error in input dialog: {e}")
-        return None
-
-def create_choice_dialog(title: str, prompt: str, choices: List[str], allow_multiple: bool = False):
-    """Create a choice dialog window - runs in GUI thread"""
-    global _gui_root
-    
-    try:
-        dialog = ChoiceDialog(_gui_root, title, prompt, choices, allow_multiple)
-        return dialog.result
-    except Exception as e:
-        print(f"Error in choice dialog: {e}")
-        return None
-
-def create_multiline_input_dialog(title: str, prompt: str, default_value: str = ""):
-    """Create a multi-line text input dialog - runs in GUI thread"""
-    global _gui_root
-    
-    try:
-        dialog = MultilineInputDialog(_gui_root, title, prompt, default_value)
-        return dialog.result
-    except Exception as e:
-        print(f"Error in multiline dialog: {e}")
-        return None
-
-def show_confirmation(title: str, message: str):
-    """Show confirmation dialog - runs in GUI thread"""
-    global _gui_root
-    
-    try:
-        dialog = ModernConfirmationDialog(_gui_root, title, message)
-        return dialog.result
-    except Exception as e:
-        print(f"Error in confirmation dialog: {e}")
-        return False
-
-def show_info(title: str, message: str):
-    """Show info dialog - runs in GUI thread"""
-    global _gui_root
-    
-    try:
-        dialog = ModernInfoDialog(_gui_root, title, message)
-        return dialog.result
-    except Exception as e:
-        print(f"Error in info dialog: {e}")
-        return False
-
-# [Include all the dialog classes as they are - ModernInputDialog, ModernConfirmationDialog, etc.]
-# These classes don't need changes as they'll be instantiated in the GUI thread
-
 class ModernInputDialog:
-    """Keep the existing implementation"""
     def __init__(self, parent, title, prompt, default_value="", input_type="text"):
         self.result = None
         self.input_type = input_type
-        
         self.theme_colors = get_theme_colors()
         
         self.dialog = tk.Toplevel(parent)
@@ -291,67 +126,38 @@ class ModernInputDialog:
         self.dialog.grab_set()
         self.dialog.resizable(False, False)
         
-        # Configure window
         self.dialog.configure(bg=self.theme_colors["bg_primary"])
         if IS_MACOS:
             try:
-                self.dialog.call('wm', 'attributes', '.', '-topmost', '1')
+                self.dialog.attributes('-topmost', True)
                 self.dialog.lift()
                 self.dialog.focus_force()
             except:
                 pass
         elif IS_WINDOWS:
             self.dialog.attributes('-topmost', True)
-            self.dialog.lift()
-            self.dialog.focus_force()
         
-        if IS_WINDOWS:
-            self.dialog.geometry("420x280")
-        else:
-            self.dialog.geometry("400x260")
-        
+        self.dialog.geometry("420x280" if IS_WINDOWS else "400x260")
         self.center_window()
         
         main_frame = tk.Frame(self.dialog, bg=self.theme_colors["bg_primary"])
         main_frame.pack(fill="both", expand=True, padx=24, pady=20)
         
-        title_label = tk.Label(
-            main_frame,
-            text=title,
-            bg=self.theme_colors["bg_primary"],
-            fg=self.theme_colors["fg_primary"],
-            font=get_title_font(),
-            anchor="w"
-        )
-        title_label.pack(fill="x", pady=(0, 8))
+        tk.Label(main_frame, text=title, bg=self.theme_colors["bg_primary"],
+                fg=self.theme_colors["fg_primary"], font=get_title_font(),
+                anchor="w").pack(fill="x", pady=(0, 8))
         
-        prompt_label = tk.Label(
-            main_frame,
-            text=prompt,
-            bg=self.theme_colors["bg_primary"],
-            fg=self.theme_colors["fg_secondary"],
-            font=get_system_font(),
-            wraplength=350,
-            justify="left",
-            anchor="w"
-        )
-        prompt_label.pack(fill="x", pady=(0, 20))
+        tk.Label(main_frame, text=prompt, bg=self.theme_colors["bg_primary"],
+                fg=self.theme_colors["fg_secondary"], font=get_system_font(),
+                wraplength=350, justify="left", anchor="w").pack(fill="x", pady=(0, 20))
         
         input_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
         input_frame.pack(fill="x", pady=(0, 24))
         
-        self.entry = tk.Entry(
-            input_frame,
-            font=get_system_font(),
-            bg=self.theme_colors["bg_primary"],
-            fg=self.theme_colors["fg_primary"],
-            relief="solid",
-            borderwidth=1,
-            highlightthickness=1,
-            highlightcolor=self.theme_colors["accent_color"],
-            highlightbackground=self.theme_colors["border_color"],
-            insertbackground=self.theme_colors["accent_color"]
-        )
+        self.entry = tk.Entry(input_frame, font=get_system_font(),
+                             bg=self.theme_colors["bg_primary"],
+                             fg=self.theme_colors["fg_primary"],
+                             relief="solid", borderwidth=1)
         self.entry.pack(fill="x", ipady=8, ipadx=12)
         
         if default_value:
@@ -361,35 +167,15 @@ class ModernInputDialog:
         button_frame = tk.Frame(main_frame, bg=self.theme_colors["bg_primary"])
         button_frame.pack(fill="x")
         
-        # OK button
-        ok_btn = tk.Button(
-            button_frame,
-            text="OK",
-            command=self.ok_clicked,
-            bg=self.theme_colors["accent_color"],
-            fg="#FFFFFF",
-            font=get_system_font(),
-            relief="flat",
-            borderwidth=0,
-            padx=20,
-            pady=8
-        )
-        ok_btn.pack(side=tk.RIGHT, padx=(8, 0))
+        tk.Button(button_frame, text="OK", command=self.ok_clicked,
+                 bg=self.theme_colors["accent_color"], fg="#FFFFFF",
+                 font=get_system_font(), relief="flat", borderwidth=0,
+                 padx=20, pady=8).pack(side=tk.RIGHT, padx=(8, 0))
         
-        # Cancel button
-        cancel_btn = tk.Button(
-            button_frame,
-            text="Cancel",
-            command=self.cancel_clicked,
-            bg=self.theme_colors["bg_secondary"],
-            fg=self.theme_colors["fg_primary"],
-            font=get_system_font(),
-            relief="flat",
-            borderwidth=0,
-            padx=20,
-            pady=8
-        )
-        cancel_btn.pack(side=tk.RIGHT)
+        tk.Button(button_frame, text="Cancel", command=self.cancel_clicked,
+                 bg=self.theme_colors["bg_secondary"], fg=self.theme_colors["fg_primary"],
+                 font=get_system_font(), relief="flat", borderwidth=0,
+                 padx=20, pady=8).pack(side=tk.RIGHT)
         
         self.dialog.protocol("WM_DELETE_WINDOW", self.cancel_clicked)
         self.dialog.bind('<Return>', lambda e: self.ok_clicked())
@@ -402,14 +188,10 @@ class ModernInputDialog:
         self.dialog.update_idletasks()
         width = self.dialog.winfo_width()
         height = self.dialog.winfo_height()
-        screen_width = self.dialog.winfo_screenwidth()
-        screen_height = self.dialog.winfo_screenheight()
-        x = (screen_width // 2) - (width // 2)
-        y = (screen_height // 2) - (height // 2)
+        x = (self.dialog.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.dialog.winfo_screenheight() // 2) - (height // 2)
         if IS_MACOS:
             y = max(50, y - 50)
-        elif IS_WINDOWS:
-            y = max(30, y - 30)
         self.dialog.geometry(f"{width}x{height}+{x}+{y}")
     
     def ok_clicked(self):
@@ -432,8 +214,6 @@ class ModernInputDialog:
         self.result = None
         self.dialog.destroy()
 
-# [Include simplified versions of other dialog classes similarly]
-
 class ModernConfirmationDialog:
     def __init__(self, parent, title, message):
         self.result = False
@@ -447,7 +227,7 @@ class ModernConfirmationDialog:
         self.dialog.configure(bg=self.theme_colors["bg_primary"])
         if IS_MACOS:
             try:
-                self.dialog.call('wm', 'attributes', '.', '-topmost', '1')
+                self.dialog.attributes('-topmost', True)
             except:
                 pass
         elif IS_WINDOWS:
@@ -517,7 +297,7 @@ class ModernInfoDialog:
         self.dialog.configure(bg=self.theme_colors["bg_primary"])
         if IS_MACOS:
             try:
-                self.dialog.call('wm', 'attributes', '.', '-topmost', '1')
+                self.dialog.attributes('-topmost', True)
             except:
                 pass
         elif IS_WINDOWS:
@@ -578,7 +358,7 @@ class ChoiceDialog:
         self.dialog.configure(bg=self.theme_colors["bg_primary"])
         if IS_MACOS:
             try:
-                self.dialog.call('wm', 'attributes', '.', '-topmost', '1')
+                self.dialog.attributes('-topmost', True)
             except:
                 pass
         elif IS_WINDOWS:
@@ -669,7 +449,7 @@ class MultilineInputDialog:
         self.dialog.configure(bg=self.theme_colors["bg_primary"])
         if IS_MACOS:
             try:
-                self.dialog.call('wm', 'attributes', '.', '-topmost', '1')
+                self.dialog.attributes('-topmost', True)
             except:
                 pass
         elif IS_WINDOWS:
@@ -742,7 +522,105 @@ class MultilineInputDialog:
         self.result = None
         self.dialog.destroy()
 
-# MCP Tools - Modified to use run_in_gui_thread
+def execute_dialog(dialog_type, params):
+    """Execute a dialog based on type and parameters"""
+    root = tk.Tk()
+    root.withdraw()
+    
+    if IS_MACOS:
+        try:
+            import subprocess
+            subprocess.run([
+                'osascript', '-e', 
+                f'tell application "System Events" to set frontmost of first process whose unix id is {os.getpid()} to true'
+            ], check=False, capture_output=True, timeout=1)
+        except:
+            pass
+    
+    result = None
+    
+    try:
+        if dialog_type == "input":
+            dialog = ModernInputDialog(root, params["title"], params["prompt"], 
+                                     params.get("default_value", ""), params.get("input_type", "text"))
+            result = dialog.result
+        elif dialog_type == "choice":
+            dialog = ChoiceDialog(root, params["title"], params["prompt"], 
+                                params["choices"], params.get("allow_multiple", False))
+            result = dialog.result
+        elif dialog_type == "multiline":
+            dialog = MultilineInputDialog(root, params["title"], params["prompt"], 
+                                         params.get("default_value", ""))
+            result = dialog.result
+        elif dialog_type == "confirmation":
+            dialog = ModernConfirmationDialog(root, params["title"], params["message"])
+            result = dialog.result
+        elif dialog_type == "info":
+            dialog = ModernInfoDialog(root, params["title"], params["message"])
+            result = dialog.result
+    except Exception as e:
+        result = {"error": str(e)}
+    finally:
+        try:
+            root.quit()
+            root.destroy()
+        except:
+            pass
+    
+    return result
+
+if __name__ == "__main__":
+    # Read parameters from stdin
+    import os
+    params_data = sys.stdin.buffer.read()
+    params = pickle.loads(params_data)
+    
+    # Execute the dialog
+    result = execute_dialog(params["dialog_type"], params["params"])
+    
+    # Write result to stdout
+    sys.stdout.buffer.write(pickle.dumps(result))
+    sys.stdout.flush()
+'''
+
+def run_gui_subprocess(dialog_type: str, params: dict) -> Any:
+    """Run a GUI dialog in a subprocess where it can use the main thread"""
+    try:
+        # Prepare the parameters
+        request = {
+            "dialog_type": dialog_type,
+            "params": params
+        }
+        
+        # Create a subprocess to run the GUI
+        process = subprocess.Popen(
+            [sys.executable, "-c", GUI_EXECUTOR_SCRIPT],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        
+        # Send parameters and get result
+        stdout, stderr = process.communicate(input=pickle.dumps(request))
+        
+        if process.returncode != 0:
+            if stderr:
+                raise RuntimeError(f"GUI subprocess error: {stderr.decode()}")
+            return None
+        
+        # Parse the result
+        result = pickle.loads(stdout)
+        
+        if isinstance(result, dict) and "error" in result:
+            raise RuntimeError(f"GUI error: {result['error']}")
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error in GUI subprocess: {e}")
+        return None
+
+# MCP Tools
 
 @mcp.tool()
 async def get_user_input(
@@ -762,12 +640,16 @@ async def get_user_input(
         if ctx:
             await ctx.info(f"Requesting user input: {prompt}")
         
-        # Run the dialog in the GUI thread
+        # Run dialog in subprocess
+        params = {
+            "title": title,
+            "prompt": prompt,
+            "default_value": default_value,
+            "input_type": input_type
+        }
+        
         result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            run_in_gui_thread,
-            create_input_dialog,
-            title, prompt, default_value, input_type
+            None, run_gui_subprocess, "input", params
         )
         
         if result is not None:
@@ -820,12 +702,15 @@ async def get_user_choice(
             await ctx.info(f"Requesting user choice: {prompt}")
             await ctx.debug(f"Available choices: {choices}")
         
-        # Run the dialog in the GUI thread
+        params = {
+            "title": title,
+            "prompt": prompt,
+            "choices": choices,
+            "allow_multiple": allow_multiple
+        }
+        
         result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            run_in_gui_thread,
-            create_choice_dialog,
-            title, prompt, choices, allow_multiple
+            None, run_gui_subprocess, "choice", params
         )
         
         if result is not None:
@@ -878,12 +763,14 @@ async def get_multiline_input(
         if ctx:
             await ctx.info(f"Requesting multiline user input: {prompt}")
         
-        # Run the dialog in the GUI thread
+        params = {
+            "title": title,
+            "prompt": prompt,
+            "default_value": default_value
+        }
+        
         result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            run_in_gui_thread,
-            create_multiline_input_dialog,
-            title, prompt, default_value
+            None, run_gui_subprocess, "multiline", params
         )
         
         if result is not None:
@@ -933,12 +820,13 @@ async def show_confirmation_dialog(
         if ctx:
             await ctx.info(f"Requesting user confirmation: {message}")
         
-        # Run the dialog in the GUI thread
+        params = {
+            "title": title,
+            "message": message
+        }
+        
         result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            run_in_gui_thread,
-            show_confirmation,
-            title, message
+            None, run_gui_subprocess, "confirmation", params
         )
         
         if ctx:
@@ -977,12 +865,13 @@ async def show_info_message(
         if ctx:
             await ctx.info(f"Showing info message to user: {message}")
         
-        # Run the dialog in the GUI thread
+        params = {
+            "title": title,
+            "message": message
+        }
+        
         result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            run_in_gui_thread,
-            show_info,
-            title, message
+            None, run_gui_subprocess, "info", params
         )
         
         if ctx:
@@ -1003,28 +892,126 @@ async def show_info_message(
             "platform": CURRENT_PLATFORM
         }
 
-# Keep the get_human_loop_prompt and health_check functions as they are
 @mcp.prompt()
 async def get_human_loop_prompt() -> Dict[str, str]:
     """Get prompting guidance for LLMs on when and how to use human-in-the-loop tools."""
-    # [Keep the existing implementation]
     return {
-        "main_prompt": "...",  # Keep existing content
-        "usage_examples": "...",
-        "decision_framework": "...",
-        "integration_tips": "..."
+        "main_prompt": """
+You have access to Human-in-the-Loop tools that allow you to interact directly with users through GUI dialogs. Use these tools strategically to enhance task completion and user experience.
+
+**WHEN TO USE HUMAN-IN-THE-LOOP TOOLS:**
+
+1. **Ambiguous Requirements** - When user instructions are unclear or could have multiple interpretations
+2. **Decision Points** - When you need user preference between valid alternatives
+3. **Creative Input** - For subjective choices like design, content style, or personal preferences
+4. **Sensitive Operations** - Before executing potentially destructive or irreversible actions
+5. **Missing Information** - When you need specific details not provided in the original request
+6. **Quality Feedback** - To get user validation on intermediate results before proceeding
+7. **Error Handling** - When encountering issues that require user guidance to resolve
+
+**AVAILABLE TOOLS:**
+- `get_user_input` - Single-line text/number input (names, values, paths, etc.)
+- `get_user_choice` - Multiple choice selection (pick from options)
+- `get_multiline_input` - Long-form text (descriptions, code, documents)
+- `show_confirmation_dialog` - Yes/No decisions (confirmations, approvals)
+- `show_info_message` - Status updates and notifications
+
+**BEST PRACTICES:**
+- Ask specific, clear questions with context
+- Provide helpful default values when possible
+- Use confirmation dialogs before destructive actions
+- Give status updates for long-running processes
+- Offer meaningful choices rather than overwhelming options
+- Be concise but informative in dialog prompts""",
+        
+        "usage_examples": """
+**EXAMPLE SCENARIOS:**
+
+1. **File Operations:**
+   - "I'm about to delete 15 files. Should I proceed?" (confirmation)
+   - "Enter the target directory path:" (input)
+   - "Choose backup format: Full, Incremental, Differential" (choice)
+
+2. **Content Creation:**
+   - "What tone should I use: Professional, Casual, Friendly?" (choice)
+   - "Please provide any specific requirements:" (multiline input)
+   - "Content generated successfully!" (info message)
+
+3. **Code Development:**
+   - "Enter the API endpoint URL:" (input)
+   - "Select framework: React, Vue, Angular, Vanilla JS" (choice)
+   - "Review the generated code and provide feedback:" (multiline input)
+
+4. **Data Processing:**
+   - "Found 3 data formats. Which should I use?" (choice)
+   - "Enter the date range (YYYY-MM-DD to YYYY-MM-DD):" (input)
+   - "Processing complete. 1,250 records updated." (info message)""",
+        
+        "decision_framework": """
+**DECISION FRAMEWORK FOR HUMAN-IN-THE-LOOP:**
+
+ASK YOURSELF:
+1. Is this decision subjective or preference-based? → USE CHOICE DIALOG
+2. Do I need specific information not provided? → USE INPUT DIALOG  
+3. Could this action cause problems if wrong? → USE CONFIRMATION DIALOG
+4. Is this a long process the user should know about? → USE INFO MESSAGE
+5. Do I need detailed explanation or content? → USE MULTILINE INPUT
+
+AVOID OVERUSE:
+- Don't ask for information already provided
+- Don't seek confirmation for obviously safe operations
+- Don't interrupt flow for trivial decisions
+- Don't ask multiple questions when one comprehensive dialog would suffice""",
+        
+        "integration_tips": """
+**INTEGRATION TIPS:**
+
+1. **Workflow Integration:**
+   Step 1: Analyze user request
+   Step 2: Identify decision points and missing info
+   Step 3: Use appropriate human-in-the-loop tools
+   Step 4: Process user responses
+   Step 5: Continue with enhanced information
+
+2. **Error Recovery:**
+   - If user cancels, gracefully explain and offer alternatives
+   - Handle timeouts by providing default behavior
+   - Always validate user input before proceeding
+
+3. **Progressive Enhancement:**
+   - Start with automated solutions
+   - Add human input only where it adds clear value
+   - Learn from user patterns to improve future automation"""
     }
 
 @mcp.tool()
 async def health_check() -> Dict[str, Any]:
     """Check if the Human-in-the-Loop server is running and GUI is available."""
     try:
-        gui_available = ensure_gui_thread_running()
+        # Test GUI availability by trying a simple operation
+        test_params = {
+            "title": "Health Check",
+            "message": "Testing GUI availability..."
+        }
+        
+        # Try to run a test dialog (but with a very short timeout)
+        gui_test_success = False
+        try:
+            # We don't actually show the dialog, just test if subprocess works
+            process = subprocess.Popen(
+                [sys.executable, "-c", "import tkinter; print('OK')"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = process.communicate(timeout=2)
+            gui_test_success = process.returncode == 0 and b'OK' in stdout
+        except:
+            gui_test_success = False
         
         return {
-            "status": "healthy" if gui_available else "degraded",
-            "gui_available": gui_available,
-            "server_name": "Human-in-the-Loop Server",
+            "status": "healthy" if gui_test_success else "degraded",
+            "gui_available": gui_test_success,
+            "server_name": "Human-in-the-Loop Server (Subprocess Mode)",
             "platform": CURRENT_PLATFORM,
             "platform_details": {
                 "system": platform.system(),
@@ -1043,8 +1030,11 @@ async def health_check() -> Dict[str, Any]:
                 "get_multiline_input",
                 "show_confirmation_dialog",
                 "show_info_message",
-                "get_human_loop_prompt"
-            ]
+                "get_human_loop_prompt",
+                "health_check"
+            ],
+            "execution_mode": "subprocess",
+            "note": "GUI operations run in separate processes for thread safety"
         }
     except Exception as e:
         return {
@@ -1056,7 +1046,7 @@ async def health_check() -> Dict[str, Any]:
 
 # Main execution
 def main():
-    print("Starting Human-in-the-Loop MCP Server (macOS Thread-Safe Version)...")
+    print("Starting Human-in-the-Loop MCP Server (macOS Subprocess Mode)...")
     print("This server provides tools for LLMs to interact with humans through GUI dialogs.")
     print(f"Platform: {CURRENT_PLATFORM} ({platform.system()} {platform.release()})")
     print("")
@@ -1072,23 +1062,31 @@ def main():
     
     # Platform-specific startup messages
     if IS_MACOS:
-        print("✓ macOS detected - Using thread-safe GUI implementation")
-        print("✓ All GUI operations will run on the main thread")
+        print("✓ macOS detected - Using subprocess mode for thread safety")
+        print("✓ Each GUI dialog runs in its own process with main thread access")
         print("Note: You may need to allow Python in System Preferences > Security & Privacy > Accessibility")
     elif IS_WINDOWS:
-        print("Windows detected - Using modern Windows 11-style GUI")
+        print("Windows detected - Using subprocess mode with Windows 11-style GUI")
     elif IS_LINUX:
-        print("Linux detected - Using Linux-compatible GUI settings")
+        print("Linux detected - Using subprocess mode with Linux-compatible GUI")
     
     # Test GUI availability
+    print("\nTesting GUI availability...")
     try:
-        if ensure_gui_thread_running():
-            print("✓ GUI thread initialized successfully")
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import tkinter; print('OK')"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, stderr = process.communicate(timeout=2)
+        if process.returncode == 0 and b'OK' in stdout:
+            print("✓ GUI system is available")
+        else:
+            print("⚠ GUI system may have issues")
     except Exception as e:
-        print(f"⚠ Warning: GUI initialization failed: {e}")
+        print(f"⚠ Could not verify GUI availability: {e}")
     
-    print("")
-    print("Starting MCP server...")
+    print("\nStarting MCP server...")
     
     # Run the server
     mcp.run()
