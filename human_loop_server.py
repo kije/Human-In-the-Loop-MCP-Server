@@ -93,15 +93,15 @@ def run_gui_subprocess(dialog_type: str, params: dict) -> Any:
 @mcp.tool()
 async def get_user_input(
     title: Annotated[str, Field(description="Title of the input dialog window")],
-    prompt: Annotated[str, Field(description="The prompt/question to show to the user")],
-    default_value: Annotated[str, Field(description="Default value to pre-fill in the input field")] = "",
+    prompt: Annotated[str, Field(description="The prompt to show to the user")],
+    default_value: Annotated[str, Field(description="Default value to pre-fill the input with")] = "",
     input_type: Annotated[Literal["text", "integer", "float"], Field(description="Type of input expected")] = "text",
     ctx: Context = None
 ) -> Dict[str, Any]:
     """
     Create an input dialog window for the user to enter text, numbers, or other data.
     
-    This tool opens a GUI dialog box where the user can input information that the LLM needs.
+    Opens a GUI dialog box where the user can input information that the LLM needs.
     Perfect for getting specific details, clarifications, or data from the user.
     """
     try:
@@ -162,7 +162,7 @@ async def get_user_choice(
     """
     Create a choice dialog window for the user to select from multiple options.
     
-    This tool opens a GUI dialog box with a list of choices where the user can select
+    Opens a GUI dialog box with a list of choices where the user can select
     one or multiple options. Perfect for getting decisions, preferences, or selections from the user.
     """
     try:
@@ -217,15 +217,15 @@ async def get_user_choice(
 @mcp.tool()
 async def get_multiline_input(
     title: Annotated[str, Field(description="Title of the input dialog window")],
-    prompt: Annotated[str, Field(description="The prompt/question to show to the user")],
+    prompt: Annotated[str, Field(description="The prompt to show to the user")],
     default_value: Annotated[str, Field(description="Default text to pre-fill in the text area")] = "",
     ctx: Context = None
 ) -> Dict[str, Any]:
     """
     Create a multi-line text input dialog for the user to enter longer text content.
     
-    This tool opens a GUI dialog box with a large text area where the user can input
-    multiple lines of text. Perfect for getting detailed descriptions, code, or long-form content.
+    Opens a GUI dialog box with a multi-line text area where the user can input text. 
+    Perfect for getting detailed descriptions, code, or long-form content.
     """
     try:
         if ctx:
@@ -279,10 +279,10 @@ async def show_confirmation_dialog(
     ctx: Context = None
 ) -> Dict[str, Any]:
     """
-    Show a confirmation dialog with Yes/No buttons.
+    Shows a confirmation dialog with Yes/No buttons.
     
-    This tool displays a message to the user and asks for confirmation.
-    Perfect for getting approval before proceeding with an action.
+    Displays a confirmation dialog to the user.
+    Perfect for getting approval or attention before proceeding with an action.
     """
     try:
         if ctx:
@@ -326,7 +326,6 @@ async def show_info_message(
     """
     Show an information message to the user.
     
-    This tool displays an informational message dialog to notify the user about something.
     The user just needs to click OK to acknowledge the message.
     """
     try:
